@@ -37,24 +37,92 @@ export default function ProductDetail() {
     },
   });
 
+  // ✅ UPDATED ADD TO CART MUTATION
   const addToCart = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error('Please sign in');
-      const { error } = await supabase.from('cart_items').upsert({
-        user_id: user.id,
-        product_id: id,
-        quantity: 1,
-      });
+
+      // Check if item already exists in cart
+      const { data: existingItem } = await supabase
+        .from('cart_items')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('product_id', id)
+        .maybeSingle();
+
+      if (existingItem) {
+        // Item already in cart - throw special error
+        throw new Error('ALREADY_IN_CART');
+      }
+
+      // Insert new item
+      const { error } = await supabase
+        .from('cart_items')
+        .insert({
+          user_id: user.id,
+          product_id: id,
+          quantity: 1,
+        });
+
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cart-count'] });
-      toast.success('Added to cart!');
+      toast.success('Added to cart! ✓');
     },
     onError: (error: any) => {
-      toast.error(error.message === 'Please sign in' ? 'Please sign in to add items to cart' : 'Failed to add to cart');
+      if (error.message === 'ALREADY_IN_CART') {
+        toast.info('This saree is already in your cart!', {
+          description: 'Go to cart to change quantity',
+        });
+      } else if (error.message === 'Please sign in') {
+        toast.error('Please sign in to add items to cart');
+      } else {
+        toast.error('Failed to add to cart');
+      }
     },
   });
+
+  // ✅ UPDATED BUY NOW HANDLER
+  const handleBuyNow = async () => {
+    if (!user) {
+      toast.error('Please sign in first');
+      return;
+    }
+
+    try {
+      // Check if already in cart
+      const { data: existingItem } = await supabase
+        .from('cart_items')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('product_id', id)
+        .maybeSingle();
+
+      if (!existingItem) {
+        // Not in cart - add it first
+        const { error } = await supabase
+          .from('cart_items')
+          .insert({
+            user_id: user.id,
+            product_id: id,
+            quantity: 1,
+          });
+
+        if (error) throw error;
+      }
+
+      // Wait a moment for cart to update
+      await queryClient.invalidateQueries({ queryKey: ['cart-count'] });
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      // Navigate to cart
+      navigate('/cart');
+    } catch (error) {
+      console.error('Buy now error:', error);
+      toast.error('Failed to proceed to cart');
+    }
+  };
 
   if (!product) return <div className="container mx-auto p-8">Loading...</div>;
 
@@ -78,7 +146,7 @@ export default function ProductDetail() {
             <Button onClick={() => addToCart.mutate()} className="flex-1" disabled={!user}>
               {user ? 'Add to Cart' : 'Sign In to Add'}
             </Button>
-            <Button onClick={() => { addToCart.mutate(); navigate('/cart'); }} className="flex-1" disabled={!user}>
+            <Button onClick={handleBuyNow} className="flex-1" disabled={!user}>
               Buy Now
             </Button>
           </div>
@@ -87,3 +155,4 @@ export default function ProductDetail() {
     </div>
   );
 }
+
